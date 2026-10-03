@@ -15,9 +15,9 @@ jobs:
       - name: Run Scanner
         env:
           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
-          ANGEL_PASSWORD: ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD: ${{ secrets.ANGEL_PASSWORD_KEY }}
           ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py 
