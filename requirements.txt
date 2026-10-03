@@ -1,5 +1,6 @@
 pandas
-pandas_ta
-pyotp
+numpy
 smartapi-python
+pyotp
 requests
+pandas_ta
