@@ -3,4 +3,3 @@ numpy
 smartapi-python
 pyotp
 requests
-pandas_ta==0.3.14b0
