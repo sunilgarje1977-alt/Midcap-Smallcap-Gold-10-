@@ -1,24 +1,23 @@
 name: Angel Gold Daily
+
 on:
   schedule:
+    # रोज सकाळी 9:15 ते 3:30 दर 2 मिनिटांनी (IST = 3:45 to 10:00 UTC)
     - cron: '*/2 3-9 * * 1-5'
   workflow_dispatch:
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Install
-        run: pip install SmartApi-python pyotp pandas pytz requests logzero
-      - name: Run
-        env:
-          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-          ANGEL_CLIENT_ID: ${{ secrets.ANGEL_CLIENT_ID }}
-          ANGEL_PASSWORD_KEY: ${{ secrets.ANGEL_PASSWORD_KEY }}
-          ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python scanner.py 
+
+      - name: Install dependencies - FIXED
+        run: |
+          python 
