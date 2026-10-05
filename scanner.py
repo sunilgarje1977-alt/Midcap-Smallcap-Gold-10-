@@ -1,17 +1,13 @@
 import os, sys
-# Force install missing module
 try: import websocket
 except: os.system(f"{sys.executable} -m pip install websocket-client logzero")
-
 import pytz, requests, pandas as pd
 from datetime import datetime, timedelta
 from SmartApi import SmartConnect
 import pyotp
 from concurrent.futures import ThreadPoolExecutor
-
 IST = pytz.timezone("Asia/Kolkata")
-
-STOCKS=["SUZLON","IDEA","YESBANK","RPOWER","IRB","HCC","GMRINFRA","SOUTHBANK","FEDERALBNK","IDFCFIRSTB","BANDHANBNK","PNB","BANKBARODA","CANBK","RBLBANK","ANGELONE","BSE","CDSL","MCX","IRCTC","ZOMATO","PAYTM","TATATECH","TATAELXSI","PERSISTENT","COFORGE","BHEL","BEL","MAZDOCK","HAL","SAIL","HINDALCO","VEDL","TATASTEEL","JSWSTEEL","TATAPOWER","ADANIPOWER","JSWENERGY","NHPC","SJVN","POWERGRID","NTPC","REC","PFC","IRFC","RVNL","VOLTAS","HAVELLS","POLYCAB","DIXON","TITAN","TATAMOTORS","M&M","MARUTI","BAJAJ-AUTO","HEROMOTOCO","MOTHERSON","ABB","SIEMENS","INDIGO","5PAISA","SUZLON"]
+STOCKS=["SUZLON","IDEA","YESBANK","RPOWER","IRB","HCC","GMRINFRA","SOUTHBANK","FEDERALBNK","IDFCFIRSTB","BANDHANBNK","PNB","BANKBARODA","CANBK","RBLBANK","ANGELONE","BSE","CDSL","MCX","IRCTC","ZOMATO","PAYTM","TATATECH","TATAELXSI","PERSISTENT","COFORGE","BHEL","BEL","MAZDOCK","HAL","SAIL","HINDALCO","VEDL","TATASTEEL","JSWSTEEL","TATAPOWER","ADANIPOWER","JSWENERGY","NHPC","SJVN","POWERGRID","NTPC","REC","PFC","IRFC","RVNL","VOLTAS","HAVELLS","POLYCAB","DIXON","TITAN","TATAMOTORS","M&M","MARUTI","BAJAJ-AUTO","HEROMOTOCO","MOTHERSON","ABB","SIEMENS","INDIGO","5PAISA"]
 
 def get_rsi(s, p=14):
     d=s.diff(); g=d.clip(lower=0); l=-d.clip(upper=0)
@@ -46,7 +42,6 @@ def scan_one(args):
         dvolx=daily_vol/hist_vol if hist_vol>0 else 0
         ltpr=obj.ltpData("NSE",sym+"-EQ",tok); ltp=ltpr['data']['ltp'] if ltpr and ltpr.get('data') else curr['c']
         pct=(ltp-dft.iloc[0]['o'])/dft.iloc[0]['o']*100
-        # RSI 60 FILTER
         if pct<0.5 or pct>10: return None
         if curr['rsi']<60 or curr['rsi']>90: return None
         if not (curr['ema9']>curr['ema15'] and ltp>curr['vwap']): return None
@@ -66,12 +61,14 @@ def main():
     T={s['symbol'].replace('-EQ',''):s['token'] for s in scrips if s['exch_seg']=='NSE' and s['symbol'].endswith('-EQ')}
     with ThreadPoolExecutor(max_workers=10) as ex: res=list(ex.map(scan_one,[(obj,s,T) for s in STOCKS]))
     br=[r for r in res if r]
+    now=datetime.now(IST).strftime("%d-%b %H:%M")
     if br:
         br=sorted(br,key=lambda x:(x['dvolx'],x['pct']),reverse=True)[:10]
-        now=datetime.now(IST).strftime("%d-%b %H:%M")
         msg=f"🔥 GOLD RSI60 {now}\n\n"
         for b in br: msg+=f"🚀 {b['sym']} @{b['c']:.1f} +{b['pct']:.1f}% RSI {b['rsi']:.0f} BO:{b['b_time']}\nVol {b['volx']:.1f}x DVol {b['dvolx']:.1f}x\nE:{b['entry']} SL:{b['sl']} T1:{b['t1']} T2:{b['t2']} T3:{b['t3']}\n\n"
-        requests.get(f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage",params={"chat_id":os.getenv('TELEGRAM_CHAT_ID'),"text":msg})
-        print(msg)
-    else: print("No Breakout")
+    else:
+        msg=f"✅ Scanner OK {now}\nGreen Tick आहे पण आज Breakout नाही.\nउद्या 9:30 ला नक्की येईल!"
+    requests.get(f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage",params={"chat_id":os.getenv('TELEGRAM_CHAT_ID'),"text":msg})
+    print(msg)
+
 if __name__=="__main__": main()
