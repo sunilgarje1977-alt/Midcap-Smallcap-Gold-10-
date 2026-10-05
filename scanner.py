@@ -1,87 +1,76 @@
-import os, time, requests, pandas as pd, pyotp
+import os, requests, pyotp, concurrent.futures, pandas as pd
 from datetime import datetime, timedelta
 from SmartApi import SmartConnect
 from stocks_full import FULL_STOCKS
 
-# तुझ्या Secrets नुसार - 100% Correct
 API_KEY = os.getenv("ANGEL_API_KEY")
 CLIENT_CODE = os.getenv("ANGEL_CLIENT_ID")
 PASSWORD = os.getenv("ANGEL_PASSWORD_KEY")
 TOTP_SECRET = os.getenv("ANGEL_TOTP_SECRET")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TG_CHAT = os.getenv("TELEGRAM_CHAT_ID")
+
+TOKEN_MAP = {}
+
+def load_tokens():
+    global TOKEN_MAP
+    url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+    data = requests.get(url, timeout=30).json()
+    TOKEN_MAP = {d['symbol'].replace('-EQ',''): d['token'] for d in data if d['exch_seg']=='NSE' and d['symbol'].endswith('-EQ')}
+    print(f"Tokens Loaded {len(TOKEN_MAP)}")
 
 def login():
-    c=SmartConnect(api_key=API_KEY)
-    totp=pyotp.TOTP(TOTP_SECRET).now()
-    d=c.generateSession(CLIENT_CODE,PASSWORD,totp)
-    if d['status']:
-        print("Angel Login Success")
-        return c
-    else:
-        print(f"Login Fail {d}")
-        return None
+    obj = SmartConnect(api_key=API_KEY)
+    totp = pyotp.TOTP(TOTP_SECRET).now()
+    s = obj.generateSession(CLIENT_CODE, PASSWORD, totp)
+    if s['status']:
+        print("Login OK")
+        return obj
+    print(s)
+    return None
 
-def send_tg(msg):
+def check_one(args):
+    obj, sym = args
     try:
-        url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        data={"chat_id":TELEGRAM_CHAT_ID,"text":msg}
-        requests.post(url,data=data,timeout=10)
-    except: pass
+        token = TOKEN_MAP.get(sym)
+        if not token: return None
+        to_d = datetime.now().strftime("%Y-%m-%d %H:%M")
+        from_d = (datetime.now()-timedelta(days=6)).strftime("%Y-%m-%d %H:%M")
+        p = {"exchange":"NSE","symboltoken":token,"interval":"FIVE_MINUTE","fromdate":from_d,"todate":to_d}
+        r = obj.getCandleData(p)
+        if not r or not r.get('data') or len(r['data']) < 20:
+            return None
+        df = pd.DataFrame(r['data'], columns=['dt','o','h','l','c','v'])
+        df['dt'] = pd.to_datetime(df['dt'])
+        today = datetime.now().strftime("%Y-%m-%d")
+        df_t = df[df['dt'].dt.strftime('%Y-%m-%d')==today]
+        if len(df_t)<1: return None
+        curr = df_t.iloc[-1]
+        df_prev = df[df['dt'].dt.strftime('%Y-%m-%d') < today]
+        if df_prev.empty: return None
+        pdh = df_prev['h'].max()
+        if curr['c'] > pdh and curr['c'] > curr['o'] and curr['v'] > 5000:
+            return f"🚀 BUY {sym} @ {curr['c']} (PDH {pdh:.1f})"
+    except:
+        return None
+    return None
 
-def scan():
-    obj=login()
-    if not obj:
-        send_tg("❌ Angel Login Fail - Secret Check Kara")
-        return
-    print(f"Scan Start {datetime.now()} Total {len(FULL_STOCKS)}")
+def main():
+    load_tokens()
+    obj = login()
+    if not obj: return
+    print(f"Scanning {len(FULL_STOCKS[:200])} fast...")
     found=[]
-    for sym in FULL_STOCKS[:300]: # Fast साठी 300 - Ontime येईल
-        try:
-            r=obj.searchScrip("NSE", sym)
-            token=None
-            if r['status']:
-                for s in r['data']:
-                    if s['tradingsymbol']==sym+"-EQ":
-                        token=s['symboltoken']; break
-            if not token:
-                time.sleep(0.3); continue
-
-            to_date=datetime.now().strftime("%Y-%m-%d %H:%M")
-            from_date=(datetime.now()-timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
-            params={"exchange":"NSE","symboltoken":token,"interval":"FIVE_MINUTE","fromdate":from_date,"todate":to_date}
-            resp=obj.getCandleData(params)
-            if not resp or not resp.get('data'):
-                time.sleep(0.3); continue
-
-            df=pd.DataFrame(resp['data'])
-            df.columns=['Datetime','Open','High','Low','Close','Volume']
-            df['Datetime']=pd.to_datetime(df['Datetime'])
-            if len(df)<20:
-                time.sleep(0.3); continue
-
-            today=datetime.now().strftime("%Y-%m-%d")
-            df_today=df[df['Datetime'].dt.strftime('%Y-%m-%d')==today]
-            if len(df_today)<2:
-                time.sleep(0.3); continue
-
-            curr=df_today.iloc[-1]
-            df_prev=df[df['Datetime'].dt.strftime('%Y-%m-%d')<today]
-            if df_prev.empty:
-                time.sleep(0.3); continue
-            pdh=df_prev['High'].max()
-
-            # Gold Logic - PDH Break + Volume
-            if curr['Close'] > pdh and curr['Close'] > curr['Open'] and curr['Volume']>10000:
-                found.append(f"🚀 BUY {sym} @ {curr['Close']} | PDH {pdh:.1f}")
-
-        except Exception as e:
-            print(f"{sym} error {e}")
-        time.sleep(0.3)
-
-    msg="⚡ Gold Signals:\n" + "\n".join(found) if found else f"No Signal Today - Scanned {len(FULL_STOCKS[:300])} Stocks"
-    print(msg); send_tg(msg)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        res = ex.map(check_one, [(obj, s) for s in FULL_STOCKS[:200]])
+        for r in res:
+            if r:
+                found.append(r)
+                print(r)
+    msg = "⚡ Gold PDH Break:\n" + "\n".join(found) if found else "No Signal - 200 Scanned"
+    requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", json={"chat_id": TG_CHAT, "text": msg})
+    print(msg)
     obj.terminateSession(CLIENT_CODE)
 
 if __name__ == "__main__":
-    scan()
+    main()
