@@ -1,4 +1,6 @@
 smartapi-python
 pyotp
 pandas
-requests 
+requests
+logzero
+websocket-client
