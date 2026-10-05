@@ -1,4 +1,4 @@
-import os, pyotp, requests
+import os, pyotp, requests, time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -71,25 +71,46 @@ def login_angel_one():
 def fetch_data(conn, token):
     to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
     from_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d 09:15")
-    params = {}
-    params["exchange"] = "NSE"
-    params["symboltoken"] = token
-    params["interval"] = "FIVE_MINUTE"
-    params["fromdate"] = from_date
-    params["todate"] = to_date
-    resp = conn.getCandleData(params)
-    if resp['status'] and resp['data']:
-        df = pd.DataFrame(resp['data'])
-        df.columns = ['Datetime','Open','High','Low','Close','Volume']
-        df['Datetime'] = pd.to_datetime(df['Datetime'])
-        return df
+    params = {
+        "exchange": "NSE",
+        "symboltoken": token,
+        "interval": "FIVE_MINUTE",
+        "fromdate": from_date,
+        "todate": to_date
+    }
+    for attempt in range(4):
+        try:
+            resp = conn.getCandleData(params)
+            if resp and resp.get('status') and resp.get('data'):
+                df = pd.DataFrame(resp['data'])
+                df.columns = ['Datetime','Open','High','Low','Close','Volume']
+                df['Datetime'] = pd.to_datetime(df['Datetime'])
+                return df
+            msg = str(resp)
+            if 'exceeding' in msg or 'Access denied' in msg:
+                wait = 2 + attempt
+                print(f"Rate limit hit {token}, wait {wait}s attempt {attempt+1}")
+                time.sleep(wait)
+                continue
+            return None
+        except Exception as e:
+            err = str(e)
+            if 'exceeding' in err or 'Access denied' in err or 'Expecting value' in err or 'JSONDecodeError' in err:
+                wait = 1.5 * (attempt + 1)
+                print(f"Retry {attempt+1}/4 for {token} after {wait}s - {err[:80]}")
+                time.sleep(wait)
+                continue
+            print(f"Fetch error {token}: {err}")
+            return None
+    print(f"Failed to fetch {token} after 4 attempts")
     return None
 
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-    except: pass
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=10)
+    except:
+        pass
 
 def scan_stocks():
     obj = login_angel_one()
@@ -101,7 +122,9 @@ def scan_stocks():
     for stock in WATCHLIST:
         df = fetch_data(obj, stock["token"])
         if df is None or len(df) < 30:
+            time.sleep(0.8)
             continue
+
         df['EMA_9'] = ema(df['Close'], 9)
         df['EMA_21'] = ema(df['Close'], 21)
         df['RSI'] = rsi(df['Close'], 14)
@@ -111,14 +134,23 @@ def scan_stocks():
         today = datetime.now().strftime("%Y-%m-%d")
         df_today = df[df['Datetime'].dt.strftime('%Y-%m-%d') == today].reset_index(drop=True)
         if len(df_today) < 3:
+            time.sleep(0.8)
             continue
+
         third = df_today.iloc[2]
         prev = df_today.iloc[0:2]
         df_prev = df[df['Datetime'].dt.strftime('%Y-%m-%d') < today]
         if df_prev.empty:
+            time.sleep(0.8)
             continue
+
         pdh = df_prev['High'].max()
-        idx = df[df['Datetime'] == third['Datetime']].index[0]
+        # find index safely
+        matching = df[df['Datetime'] == third['Datetime']]
+        if matching.empty:
+            time.sleep(0.8)
+            continue
+        idx = matching.index[0]
         curr = df.iloc[idx]
 
         cond1 = abs(curr['Open'] - curr['Low']) < (curr['Close'] * 0.0005)
@@ -134,10 +166,15 @@ def scan_stocks():
             found.append(msg)
             print(msg)
 
+        time.sleep(0.8)
+
     if found:
         final = "Gold Signals:\n" + "\n".join(found)
     else:
         final = f"Today {today} - No Gold Signal"
     print(final)
     send_telegram(final)
-    obj.terminateSession(CLIENT_CODE)  
+    obj.terminateSession(CLIENT_CODE)
+
+if __name__ == "__main__":
+    scan_stocks()
