@@ -46,14 +46,13 @@ def scan_one(args):
 
         orb_high=dft.iloc[:3]['h'].max()
         orb_low=dft.iloc[:3]['l'].min()
-
         curr=dft.iloc[-1]
+
         ltp_resp=obj.ltpData("NSE",sym+"-EQ",token)
         ltp=ltp_resp['data']['ltp'] if ltp_resp and ltp_resp.get('data') else curr['c']
         first_open=dft.iloc[0]['o']
         pct=(ltp-first_open)/first_open*100
 
-        # खरा Breakout Time 9:15-9:30 पासून शोध
         breakout_time=None
         breakout_price=0
         for i in range(2, len(dft)):
@@ -64,32 +63,25 @@ def scan_one(args):
                 break
         if not breakout_time: return None
 
-        # Angel Gold Filter
         if not (curr['ema9']>curr['ema15'] and ltp>curr['vwap'] and ltp>curr['ema9']): return None
         if pct<0.5 or pct>10: return None
         if curr['rsi']<52 or curr['rsi']>86: return None
 
-        # === 1:2.5 RATIO + TRAILING ===
+        # === 1:2.5 + TRAILING ===
         entry=round(ltp+0.1,2)
         sl=round(min(orb_low, curr['ema15'], curr['vwap'])*0.997,2)
         risk=entry-sl
         if risk<=0: sl=round(entry*0.97,2); risk=entry-sl
         if risk/entry>0.035: sl=round(entry*0.965,2); risk=entry-sl
 
-        t1=round(entry+risk*1.0,2) # 1:1
-        t2=round(entry+risk*1.5,2) # 1:1.5
-        t3=round(entry+risk*2.5,2) # 1:2.5 Final
+        t1=round(entry+risk*1.0,2)
+        t2=round(entry+risk*1.5,2)
+        t3=round(entry+risk*2.5,2)
+        tsl1=round(entry,2)
+        tsl2=round(entry+risk*0.8,2)
+        tsl3=round(entry+risk*1.5,2)
 
-        tsl1=round(entry,2) # T1 ला SL = Entry
-        tsl2=round(entry+risk*0.8,2) # T2 ला SL = Entry+0.8R
-        tsl3=round(entry+risk*1.5,2) # 2R ला SL = Entry+1.5R
-
-        return {
-            "sym":sym,"c":ltp,"pct":pct,"rsi":curr['rsi'],"b_time":breakout_time,"b_price":breakout_price,
-            "orb":orb_high,"entry":entry,"sl":sl,"risk":round(risk/entry*100,2),
-            "t1":t1,"t2":t2,"t3":t3,"tsl1":tsl1,"tsl2":tsl2,"tsl3":tsl3,
-            "ema9":curr['ema9'],"ema15":curr['ema15'],"vwap":curr['vwap']
-        }
+        return {"sym":sym,"c":ltp,"pct":pct,"rsi":curr['rsi'],"b_time":breakout_time,"b_price":breakout_price,"orb":orb_high,"entry":entry,"sl":sl,"risk":round(risk/entry*100,2),"t1":t1,"t2":t2,"t3":t3,"tsl1":tsl1,"tsl2":tsl2,"tsl3":tsl3,"ema9":curr['ema9'],"ema15":curr['ema15'],"vwap":curr['vwap']}
     except:
         return None
 
@@ -101,7 +93,7 @@ def main():
     scrips=requests.get(url).json()
     TOKEN_MAP={s['symbol'].replace('-EQ',''):s['token'] for s in scrips if s['exch_seg']=='NSE' and s['symbol'].endswith('-EQ')}
     stocks=get_smallcap_400()
-    print(f"Scanning {len(stocks)} Stocks...")
+    print(f"Scanning {len(stocks)}...")
     with ThreadPoolExecutor(max_workers=12) as exe:
         results=list(exe.map(scan_one, [(obj,s,TOKEN_MAP) for s in stocks]))
     breaks=[r for r in results if r]
@@ -110,13 +102,13 @@ def main():
     if breaks:
         breaks=sorted(breaks,key=lambda x:x['pct'],reverse=True)[:10]
         now=datetime.now(IST).strftime("%d-%b %H:%M")
-        msg=f"🔥 ANGEL GOLD 1:2.5 {now}\n9EMA>15EMA + VWAP + ORB + Trail\n\n"
+        msg=f"🔥 ANGEL GOLD 1:2.5 {now}\n\n"
         for b in breaks:
-            msg+=f"🚀 {b['sym']} @ {b['c']:.1f} (+{b['pct']:.1f}%)\nBreak: {b['b_time']} @ {b['b_price']:.1f} ORB {b['orb']:.1f} RSI {b['rsi']:.0f}\n📌 E: {b['entry']} SL: {b['sl']} ({b['risk']}%)\n🎯 T1:{b['t1']} T2:{b['t2']} T3:{b['t3']}(2.5R)\n🔄 Trail: >T1 SL>{b['tsl1']} | >T2 SL>{b['tsl2']} | >2R SL>{b['tsl3']}\n9EMA {b['ema9']:.1f}>15EMA {b['ema15']:.1f} VWAP {b['vwap']:.1f}\n\n"
+            msg+=f"🚀 {b['sym']} @ {b['c']:.1f} (+{b['pct']:.1f}%) {b['b_time']}\nE:{b['entry']} SL:{b['sl']}({b['risk']}%)\n🎯 T1:{b['t1']} T2:{b['t2']} T3:{b['t3']}\n🔄 >T1 SL>{b['tsl1']} >T2 SL>{b['tsl2']} >2R SL>{b['tsl3']}\n\n"
         requests.get(f"https://api.telegram.org/bot{token}/sendMessage",params={"chat_id":chat,"text":msg})
         print(msg)
     else:
-        print("No Breakout Today")
+        print("No Breakout")
 
 if __name__=="__main__":
-    main()  
+    main() 
