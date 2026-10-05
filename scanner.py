@@ -140,4 +140,4 @@ def scan_stocks():
         final = f"Today {today} - No Gold Signal"
     print(final)
     send_telegram(final)
-    obj.terminateSession(CLIENT_CODE)
+    obj.terminateSession(CLIENT_CODE)  
