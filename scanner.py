@@ -1,4 +1,4 @@
-import os, pytz, time, requests, io
+import os, pytz, requests
 import pandas as pd
 from datetime import datetime, timedelta
 from SmartApi import SmartConnect
@@ -9,19 +9,19 @@ IST = pytz.timezone("Asia/Kolkata")
 
 def get_smallcap_400():
     try:
-        url = "https://archives.nseindia.com/content/indices/ind_niftysmallcap500list.csv"
-        r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
-        df = pd.read_csv(io.StringIO(r.text))
-        symbols = [s.strip().upper() for s in df['Symbol'].dropna().tolist()]
-        return symbols[:400]
-    except:
         from smallcap_stocks import FULL_STOCKS
         return FULL_STOCKS[:400]
+    except:
+        return []
 
 def get_rsi(s, p=14):
     d=s.diff(); g=d.clip(lower=0); l=-d.clip(upper=0)
     rs=g.ewm(alpha=1/p).mean()/l.ewm(alpha=1/p).mean()
     return 100-(100/(1+rs))
+
+def get_vwap(df):
+    tp=(df['h']+df['l']+df['c'])/3
+    return (tp*df['v']).cumsum()/df['v'].cumsum()
 
 def scan_one(args):
     obj, sym, token_map = args
@@ -31,46 +31,65 @@ def scan_one(args):
         to_d=datetime.now(IST).strftime("%Y-%m-%d %H:%M")
         from_d=(datetime.now(IST)-timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
         resp=obj.getCandleData({"exchange":"NSE","symboltoken":token,"interval":"FIVE_MINUTE","fromdate":from_d,"todate":to_d})
-        if not resp or not resp.get('data') or len(resp['data'])<25: return None
+        if not resp or not resp.get('data') or len(resp['data'])<30: return None
         df=pd.DataFrame(resp['data'],columns=['dt','o','h','l','c','v'])
         for c in ['o','h','l','c','v']: df[c]=pd.to_numeric(df[c],errors='coerce')
         df['dt']=pd.to_datetime(df['dt'])
-        df['rsi']=get_rsi(df['c'])
-        df['ema20']=df['c'].ewm(span=20).mean()
         today=datetime.now(IST).strftime("%Y-%m-%d")
-        dft=df[df['dt'].dt.strftime("%Y-%m-%d")==today].reset_index(drop=True)
-        if len(dft)<4: return None
+        dft=df[df['dt'].dt.strftime("%Y-%m-%d")==today].copy().reset_index(drop=True)
+        if len(dft)<10: return None
+
+        dft['ema9']=dft['c'].ewm(span=9).mean()
+        dft['ema15']=dft['c'].ewm(span=15).mean()
+        dft['vwap']=get_vwap(dft)
+        dft['rsi']=get_rsi(dft['c'])
+
         orb_high=dft.iloc[:3]['h'].max()
         orb_low=dft.iloc[:3]['l'].min()
-        orb_vol=dft.iloc[:3]['v'].mean()
-        first_open=dft.iloc[0]['o']
-        prev_12_high=dft.iloc[max(0,len(dft)-12):len(dft)-1]['h'].max() if len(dft)>1 else 0
-        prev_12_vol=dft.iloc[max(0,len(dft)-12):len(dft)-1]['v'].mean()+1 if len(dft)>1 else 1
-        ltp_resp=obj.ltpData("NSE",sym+"-EQ",token)
-        ltp=ltp_resp['data']['ltp'] if ltp_resp and ltp_resp.get('data') else dft.iloc[-1]['c']
+
         curr=dft.iloc[-1]
+        ltp_resp=obj.ltpData("NSE",sym+"-EQ",token)
+        ltp=ltp_resp['data']['ltp'] if ltp_resp and ltp_resp.get('data') else curr['c']
+        first_open=dft.iloc[0]['o']
         pct=(ltp-first_open)/first_open*100
 
-        # LOOSE FILTER FOR MONDAY
-        if pct>9 or pct<0.05: return None
-        if ltp<curr['ema20']: return None
-        if curr['v']<2000: return None
+        # खरा Breakout Time 9:15-9:30 पासून शोध
+        breakout_time=None
+        breakout_price=0
+        for i in range(2, len(dft)):
+            c=dft.iloc[i]; p=dft.iloc[i-1]
+            if p['ema9']<=p['ema15'] and c['ema9']>c['ema15'] and c['c']>c['vwap'] and c['c']>orb_high*0.998:
+                breakout_time=c['dt'].strftime("%H:%M")
+                breakout_price=c['c']
+                break
+        if not breakout_time: return None
 
-        is_orb=ltp>orb_high and 45<=curr['rsi']<=90 and curr['v']>orb_vol*1.05
-        is_day=ltp>=prev_12_high*0.999 and 45<=curr['rsi']<=90 and curr['v']>prev_12_vol*1.1
+        # Angel Gold Filter
+        if not (curr['ema9']>curr['ema15'] and ltp>curr['vwap'] and ltp>curr['ema9']): return None
+        if pct<0.5 or pct>10: return None
+        if curr['rsi']<52 or curr['rsi']>86: return None
 
-        if is_orb or is_day:
-            entry=round(ltp+0.1,2)
-            day_low=dft['l'].min()
-            sl=round(min(orb_low,curr['ema20']*0.998),2) if is_orb else round(min(day_low*1.001,ltp*0.985),2)
-            risk=entry-sl
-            if risk<=0: return None
-            if risk/entry>0.03: sl=round(entry*0.97,2); risk=entry-sl
-            t1=round(entry+risk*1.8,2)
-            t2=round(entry+risk*3.0,2)
-            trail=round(entry+risk*0.8,2)
-            return {"sym":sym,"c":ltp,"pct":pct,"rsi":curr['rsi'],"vol":curr['v'],"type":f"ORB {orb_high:.1f}" if is_orb else f"DAY {prev_12_high:.1f}","b_time":datetime.now(IST).strftime("%H:%M"),"entry":entry,"sl":sl,"t1":t1,"t2":t2,"trail":trail,"risk_per":round(risk/entry*100,2),"logic":"ORB" if is_orb else "DAY"}
-        return None
+        # === 1:2.5 RATIO + TRAILING ===
+        entry=round(ltp+0.1,2)
+        sl=round(min(orb_low, curr['ema15'], curr['vwap'])*0.997,2)
+        risk=entry-sl
+        if risk<=0: sl=round(entry*0.97,2); risk=entry-sl
+        if risk/entry>0.035: sl=round(entry*0.965,2); risk=entry-sl
+
+        t1=round(entry+risk*1.0,2) # 1:1
+        t2=round(entry+risk*1.5,2) # 1:1.5
+        t3=round(entry+risk*2.5,2) # 1:2.5 Final
+
+        tsl1=round(entry,2) # T1 ला SL = Entry
+        tsl2=round(entry+risk*0.8,2) # T2 ला SL = Entry+0.8R
+        tsl3=round(entry+risk*1.5,2) # 2R ला SL = Entry+1.5R
+
+        return {
+            "sym":sym,"c":ltp,"pct":pct,"rsi":curr['rsi'],"b_time":breakout_time,"b_price":breakout_price,
+            "orb":orb_high,"entry":entry,"sl":sl,"risk":round(risk/entry*100,2),
+            "t1":t1,"t2":t2,"t3":t3,"tsl1":tsl1,"tsl2":tsl2,"tsl3":tsl3,
+            "ema9":curr['ema9'],"ema15":curr['ema15'],"vwap":curr['vwap']
+        }
     except:
         return None
 
@@ -82,29 +101,22 @@ def main():
     scrips=requests.get(url).json()
     TOKEN_MAP={s['symbol'].replace('-EQ',''):s['token'] for s in scrips if s['exch_seg']=='NSE' and s['symbol'].endswith('-EQ')}
     stocks=get_smallcap_400()
-    print(f"Loaded {len(stocks)} stocks")
-    breaks=[]
+    print(f"Scanning {len(stocks)} Stocks...")
     with ThreadPoolExecutor(max_workers=12) as exe:
         results=list(exe.map(scan_one, [(obj,s,TOKEN_MAP) for s in stocks]))
     breaks=[r for r in results if r]
-
     token=os.getenv("TELEGRAM_BOT_TOKEN")
     chat=os.getenv("TELEGRAM_CHAT_ID")
-
     if breaks:
         breaks=sorted(breaks,key=lambda x:x['pct'],reverse=True)[:10]
         now=datetime.now(IST).strftime("%d-%b %H:%M")
-        msg=f"🔥 SMALLCAP 400 BREAKOUT {now}\n400 Stocks | LOOSE FILTER\n\n"
+        msg=f"🔥 ANGEL GOLD 1:2.5 {now}\n9EMA>15EMA + VWAP + ORB + Trail\n\n"
         for b in breaks:
-            msg+=f"🚀 {b['sym']} @ {b['c']:.1f} (+{b['pct']:.1f}%) [{b['logic']} {b['type']}]\n📌 Entry: {b['entry']} | RSI {b['rsi']:.0f}\n🛡️ SL: {b['sl']} ({b['risk_per']}%) Vol {int(b['vol']/1000)}k\n🎯 T1: {b['t1']} | T2: {b['t2']}\n📈 Trail: {b['trail']} @ {b['b_time']}\n\n"
+            msg+=f"🚀 {b['sym']} @ {b['c']:.1f} (+{b['pct']:.1f}%)\nBreak: {b['b_time']} @ {b['b_price']:.1f} ORB {b['orb']:.1f} RSI {b['rsi']:.0f}\n📌 E: {b['entry']} SL: {b['sl']} ({b['risk']}%)\n🎯 T1:{b['t1']} T2:{b['t2']} T3:{b['t3']}(2.5R)\n🔄 Trail: >T1 SL>{b['tsl1']} | >T2 SL>{b['tsl2']} | >2R SL>{b['tsl3']}\n9EMA {b['ema9']:.1f}>15EMA {b['ema15']:.1f} VWAP {b['vwap']:.1f}\n\n"
         requests.get(f"https://api.telegram.org/bot{token}/sendMessage",params={"chat_id":chat,"text":msg})
         print(msg)
     else:
-        # TELEGRAM ला पण कळवेल की Bot चाललाय
-        now=datetime.now(IST).strftime("%d-%b %H:%M")
-        msg=f"ℹ️ Smallcap 400 Scan {now}\nNo Breakout found in 400 stocks (Loose filter). Bot is LIVE ✅"
-        requests.get(f"https://api.telegram.org/bot{token}/sendMessage",params={"chat_id":chat,"text":msg})
-        print("No Breakout - Sent info to Telegram")
+        print("No Breakout Today")
 
 if __name__=="__main__":
-    main()
+    main()  
