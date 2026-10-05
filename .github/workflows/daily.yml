@@ -1,34 +1,27 @@
 name: Run Scanner Daily
 on:
-  schedule:
-    - cron: '20 3 * * 1-5'
-    - cron: '30 3 * * 1-5'
-    - cron: '0 4 * * 1-5'
-    - cron: '30 4 * * 1-5'
-    - cron: '0 5 * * 1-5'
-    - cron: '30 5 * * 1-5'
-    - cron: '0 6 * * 1-5'
-    - cron: '30 6 * * 1-5'
-    - cron: '0 7 * * 1-5'
-    - cron: '30 7 * * 1-5'
-    - cron: '0 8 * * 1-5'
-    - cron: '30 8 * * 1-5'
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1-5' # रोज सकाळी 8:30 IST
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - run: pip install -r requirements.txt
+          python-version: '3.10'
+      - name: Install Deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
       - name: Run Scanner
         env:
           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_ID }}
-          ANGEL_PASSWORD: ${{ secrets.ANGEL_PASSWORD_KEY }}
+          ANGEL_CLIENT_ID: ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD_KEY: ${{ secrets.ANGEL_PASSWORD_KEY }}
           ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python scanner.py
