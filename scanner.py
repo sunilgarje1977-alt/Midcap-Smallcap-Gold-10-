@@ -1,11 +1,15 @@
 import os, sys
-try: import websocket
-except: os.system(f"{sys.executable} -m pip install websocket-client logzero")
+try:
+    import websocket
+except:
+    os.system(f"{sys.executable} -m pip install websocket-client logzero -q")
+
 import pytz, requests, pandas as pd
 from datetime import datetime, timedelta
 from SmartApi import SmartConnect
 import pyotp
 from concurrent.futures import ThreadPoolExecutor
+
 IST = pytz.timezone("Asia/Kolkata")
 STOCKS=["SUZLON","IDEA","YESBANK","RPOWER","IRB","HCC","GMRINFRA","SOUTHBANK","FEDERALBNK","IDFCFIRSTB","BANDHANBNK","PNB","BANKBARODA","CANBK","RBLBANK","ANGELONE","BSE","CDSL","MCX","IRCTC","ZOMATO","PAYTM","TATATECH","TATAELXSI","PERSISTENT","COFORGE","BHEL","BEL","MAZDOCK","HAL","SAIL","HINDALCO","VEDL","TATASTEEL","JSWSTEEL","TATAPOWER","ADANIPOWER","JSWENERGY","NHPC","SJVN","POWERGRID","NTPC","REC","PFC","IRFC","RVNL","VOLTAS","HAVELLS","POLYCAB","DIXON","TITAN","TATAMOTORS","M&M","MARUTI","BAJAJ-AUTO","HEROMOTOCO","MOTHERSON","ABB","SIEMENS","INDIGO","5PAISA"]
 
@@ -51,12 +55,15 @@ def scan_one(args):
         entry=round(ltp+0.1,2); sl=round(min(orb_l,curr['ema15'])*0.997,2); risk=entry-sl
         if risk<=0: sl=round(entry*0.97,2); risk=entry-sl
         if risk/entry>0.035: sl=round(entry*0.965,2); risk=entry-sl
-        return {"sym":sym,"c":ltp,"pct":pct,"rsi":curr['rsi'],"orb_h":orb_h,"b_time":breakout['dt'].strftime("%H:%M"),"volx":curr['v']/avg10,"dvolx":dvolx,"entry":entry,"sl":sl,"risk":round(risk/entry*100,2),"t1":round(entry+risk*1,2),"t2":round(entry+risk*1.5,2),"t3":round(entry+risk*2.5,2)}
+        return {"sym":sym,"c":ltp,"pct":pct,"rsi":curr['rsi'],"b_time":breakout['dt'].strftime("%H:%M"),"volx":curr['v']/avg10,"dvolx":dvolx,"entry":entry,"sl":sl,"risk":round(risk/entry*100,2),"t1":round(entry+risk*1,2),"t2":round(entry+risk*1.5,2),"t3":round(entry+risk*2.5,2)}
     except: return None
 
 def main():
-    obj=SmartConnect(api_key=os.getenv("ANGEL_API_KEY")); totp=pyotp.TOTP(os.getenv("ANGEL_TOTP_SECRET")).now()
+    print("Starting Scanner...")
+    obj=SmartConnect(api_key=os.getenv("ANGEL_API_KEY"))
+    totp=pyotp.TOTP(os.getenv("ANGEL_TOTP_SECRET")).now()
     obj.generateSession(os.getenv("ANGEL_CLIENT_ID"),os.getenv("ANGEL_PASSWORD_KEY"),totp)
+    print("Angel Login OK")
     scrips=requests.get("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json").json()
     T={s['symbol'].replace('-EQ',''):s['token'] for s in scrips if s['exch_seg']=='NSE' and s['symbol'].endswith('-EQ')}
     with ThreadPoolExecutor(max_workers=10) as ex: res=list(ex.map(scan_one,[(obj,s,T) for s in STOCKS]))
@@ -64,11 +71,7 @@ def main():
     now=datetime.now(IST).strftime("%d-%b %H:%M")
     if br:
         br=sorted(br,key=lambda x:(x['dvolx'],x['pct']),reverse=True)[:10]
-        msg=f"🔥 GOLD RSI60 {now}\n\n"
-        for b in br: msg+=f"🚀 {b['sym']} @{b['c']:.1f} +{b['pct']:.1f}% RSI {b['rsi']:.0f} BO:{b['b_time']}\nVol {b['volx']:.1f}x DVol {b['dvolx']:.1f}x\nE:{b['entry']} SL:{b['sl']} T1:{b['t1']} T2:{b['t2']} T3:{b['t3']}\n\n"
+        msg=f"🔥 GOLD RSI60 {now}\n9:15-9:30 ORB Breakout\n\n"
+        for b in br: msg+=f"🚀 {b['sym']} @{b['c']:.1f} +{b['pct']:.1f}% RSI {b['rsi']:.0f} BO:{b['b_time']}\nVol {b['volx']:.1f}x DVol {b['dvolx']:.1f}x\nE:{b['entry']} SL:{b['sl']}({b['risk']}%) T1:{b['t1']} T2:{b['t2']} T3:{b['t3']}\n\n"
     else:
-        msg=f"✅ Scanner OK {now}\nGreen Tick आहे पण आज Breakout नाही.\nउद्या 9:30 ला नक्की येईल!"
-    requests.get(f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/sendMessage",params={"chat_id":os.getenv('TELEGRAM_CHAT_ID'),"text":msg})
-    print(msg)
-
-if __name__=="__main__": main()
+        msg=f"✅ Scanner Running OK {now}\nCode is 
