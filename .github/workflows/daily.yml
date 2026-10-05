@@ -1,4 +1,4 @@
- name: Run Scanner Daily
+name: Run Scanner Daily
 on:
   schedule:
     - cron: '20 3 * * 1-5'
