@@ -3,3 +3,4 @@ numpy
 smartapi-python
 pyotp
 requests
+logzero 
