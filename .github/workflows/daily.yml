@@ -1,24 +1,38 @@
-name: Smallcap-400-Scanner
+ name: Angel Gold Daily
+
 on:
   schedule:
-    - cron: '* 3-10 * * 1-5'
+    - cron: '*/2 3-9 * * 1-5'
   workflow_dispatch:
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-      - name: Install
-        run: pip install -r requirements.txt
-      - name: Run Scanner
-        run: python scanner.py
+          python-version: '3.10'
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install SmartApi-python pyotp pandas pytz requests
+      - name: Run Scanner 9:15 to 15:00 IST
         env:
           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
           ANGEL_CLIENT_ID: ${{ secrets.ANGEL_CLIENT_ID }}
           ANGEL_PASSWORD_KEY: ${{ secrets.ANGEL_PASSWORD_KEY }}
           ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }} 
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          H=$(TZ='Asia/Kolkata' date +%H)
+          M=$(TZ='Asia/Kolkata' date +%M)
+          T=$((10#$H*60+10#$M))
+          if [ $T -ge 555 ] && [ $T -le 900 ]; then
+            echo "Market ON $H:$M IST - Scanning 400 Stocks"
+            python scanner.py
+          else
+            echo "Market OFF $H:$M IST - Skip"
+          fi 
